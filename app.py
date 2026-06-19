@@ -2,51 +2,36 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from sqlalchemy import text
+import urllib.parse
 
-st.set_page_config(page_title="Gestão Comercial Pro - Reginaldo", page_icon="🏪", layout="wide")
+st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="wide")
 
-# =========================================================================================
-# 🔒 CONTROLE DE ACESSO (TELA DE LOGIN POR SENHA VIA SECRETS)
-# =========================================================================================
-# Busca a senha definida nas Secrets. Se não configurada, usa uma padrão por segurança.
-try:
-    SENHA_CORRETA = st.secrets["senha_acesso"]
-except:
-    SENHA_CORRETA = "reginaldo123"  # Senha padrão caso esqueça de colocar nas Secrets
-
-if "autenticado" not in st.session_state:
-    st.session_state.autenticado = False
-
-if not st.session_state.autenticado:
-    st.markdown("<h2 style='text-align: center; color: #2e7d32;'>🏪 Sistema Comercial Pro</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center;'>Digite a senha de acesso para liberar o painel de vendas e estoque.</p>", unsafe_allow_html=True)
-    
-    col_login, _ = st.columns([1, 2])
-    with col_login:
-        with st.form("tela_login"):
-            senha_digitada = st.text_input("Senha de Acesso", type="password", placeholder="Digite aqui...")
-            botao_entrar = st.form_submit_button("🔓 Entrar no Sistema")
-            
-            if botao_entrar:
-                if senha_digitada == SENHA_CORRETA:
-                    st.session_state.autenticado = True
-                    st.success("Acesso liberado!")
-                    st.rerun()
-                else:
-                    st.error("Senha incorreta! Tente novamente.")
-    st.stop()  # Trava a execução do resto do app se não estiver logado
-
-# =========================================================================================
-# --- CONEXÃO COM O POSTGRESQL (SUPABASE REGINALDO) ---
-# =========================================================================================
+# --- CONEXÃO COM O POSTGRESQL (SUPABASE) ---
 try:
     conn = st.connection("postgresql", type="sql")
+    
+    # 🛡️ GARANTIA: Garante que a tabela de clientes existe no banco oficial
+    with conn.session as session:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS clientes (
+                id SERIAL PRIMARY KEY,
+                nome VARCHAR(255) NOT NULL,
+                whatsapp VARCHAR(20) NOT NULL,
+                endereco TEXT,
+                bairro VARCHAR(100),
+                observacoes TEXT,
+                data_cadastro TIMESTAMP DEFAULT NOW()
+            );
+        """))
+        session.commit()
 except Exception as e:
-    st.error(f"Erro ao inicializar conexão com o banco do Reginaldo: {e}")
+    st.error(f"Erro ao inicializar conexão com o banco: {e}")
 
-# Inicializa o carrinho na sessão se não existir
+# Inicializa o carrinho e controle de mensagens na sessão se não existirem
 if "carrinho" not in st.session_state:
     st.session_state.carrinho = []
+if "ultima_venda" not in st.session_state:
+    st.session_state.ultima_venda = None
 
 # --- DESIGN PERSONALIZADO (CSS) ---
 st.markdown("""
@@ -74,29 +59,27 @@ with st.sidebar:
     st.markdown("## 🏪 **Menu Principal**")
     tela = st.radio("Ir para:", [
         "💰 Frente de Caixa (Balcão)", 
+        "👥 Cadastro de Clientes",
         "📦 Controle de Estoque", 
         "📋 Extrato do Estoque",
         "📊 Painel Financeiro"
     ])
     st.markdown("---")
-    if st.button("🔒 Sair / Desconectar"):
-        st.session_state.autenticado = False
-        st.session_state.carrinho = []
-        st.rerun()
-    st.markdown("---")
-    st.caption("Reginaldo-oficial | Supabase Cloud")
+    st.caption("Conectado ao Supabase PostgreSQL")
 
 # -----------------------------------------------------------------------------------------
-# TELA 1: FRENTE DE CAIXA (CARRINHO MULTI-ITENS)
+# TELA 1: FRENTE DE CAIXA
 # -----------------------------------------------------------------------------------------
 if tela == "💰 Frente de Caixa (Balcão)":
     st.title("🛒 Frente de Caixa")
     
     try:
         df_est = conn.query("SELECT * FROM estoque ORDER BY produto;", ttl="0s")
+        df_cli_venda = conn.query("SELECT id, nome, whatsapp FROM clientes ORDER BY nome;", ttl="0s")
     except Exception as e:
         st.error(f"Não foi possível ler o banco de dados: {e}")
         df_est = pd.DataFrame()
+        df_cli_venda = pd.DataFrame()
         
     if df_est.empty:
         st.warning("Estoque zerado! Cadastre produtos na aba de Estoque.")
@@ -105,63 +88,86 @@ if tela == "💰 Frente de Caixa (Balcão)":
         
         with col_venda:
             st.markdown("### 1. Adicionar Produto")
-            produtos_disponiveis = df_est[df_est['whitespace' if 'quantidade' not in df_est else 'quantidade'] > 0]['produto'].tolist()
+            produtos_disponiveis = df_est[df_est['quantidade'] > 0]['produto'].tolist()
             
             if not produtos_disponiveis:
                 st.error("🚨 Todos os produtos estão esgotados!")
             else:
-                prod_selecionado = st.selectbox("Selecione o Produto", produtos_disponiveis)
-                detalhes = df_est[df_est['produto'] == prod_selecionado].iloc[0]
+                # 🔍 BUSCA INTELIGENTE POR DIGITAÇÃO
+                prod_selecionado = st.selectbox(
+                    "Selecione o Produto",
+                    options=produtos_disponiveis,
+                    index=None,
+                    placeholder="🔍 Digite o nome do produto para buscar..."
+                )
                 
-                unidades_pack = int(detalhes['unidades_por_pacote'])
-                qtd_maxima = int(detalhes['quantidade'] // unidades_pack) if detalhes['tipo_venda'] == "Fardo/Fechado" else int(detalhes['quantidade'])
-                
-                c1, c2 = st.columns(2)
-                c1.metric("Preço Unitário", f"R$ {float(detalhes['preco_venda']):.2f}")
-                c2.metric("Disponível", f"{qtd_maxima} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{qtd_maxima} un")
-                
-                qtd_venda = st.number_input("Quantidade desejada", min_value=1, max_value=max(1, qtd_maxima), value=1, step=1)
-                
-                if st.button("➕ Adicionar ao Pedido"):
-                    ja_no_carrinho = False
-                    for item in st.session_state.carrinho:
-                        if item['produto'] == prod_selecionado:
-                            if item['quantidade'] + qtd_venda <= qtd_maxima:
-                                item['quantidade'] += qtd_venda
-                                item['subtotal'] = item['quantidade'] * float(detalhes['preco_venda'])
-                                item['unidades_totais'] = item['quantidade'] * unidades_pack
-                                if detalhes['tipo_venda'] == "Fardo/Fechado":
-                                    item['custo_total'] = float(detalhes['custo']) * item['quantidade']
-                                else:
-                                    item['custo_total'] = (float(detalhes['custo']) / unidades_pack) * item['unidades_totais']
-                                ja_no_carrinho = True
-                            else:
-                                st.error("Quantidade total excede o estoque disponível!")
-                                ja_no_carrinho = True
+                if prod_selecionado:
+                    detalhes = df_est[df_est['produto'] == prod_selecionado].iloc[0]
+                    unidades_pack = int(detalhes['unidades_por_pacote'])
+                    qtd_maxima = int(detalhes['quantidade'] // unidades_pack) if detalhes['tipo_venda'] == "Fardo/Fechado" else int(detalhes['quantidade'])
                     
-                    if not ja_no_carrinho:
-                        if detalhes['tipo_venda'] == "Fardo/Fechado":
-                            custo_calculado = float(detalhes['custo']) * qtd_venda
-                        else:
-                            custo_calculado = (float(detalhes['custo']) / unidades_pack) * (qtd_venda * unidades_pack)
+                    # 📊 EXIBIÇÃO EM CARDS INFORMATIVOS
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Preço", f"R$ {float(detalhes['preco_venda']):.2f}")
+                    c2.metric("Estoque Atual", f"{qtd_maxima} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{qtd_maxima} un")
+                    c3.metric("Tipo de Venda", str(detalhes['tipo_venda']))
+                    
+                    st.markdown("---")
+                    qtd_venda = st.number_input("Quantidade desejada", min_value=1, max_value=max(1, qtd_maxima), value=1, step=1)
+                    
+                    if st.button("➕ Adicionar ao Pedido"):
+                        ja_no_carrinho = False
+                        for item in st.session_state.carrinho:
+                            if item['produto'] == prod_selecionado:
+                                if item['quantidade'] + qtd_venda <= qtd_maxima:
+                                    item['quantidade'] += qtd_venda
+                                    item['subtotal'] = item['quantidade'] * float(detalhes['preco_venda'])
+                                    item['unidades_totais'] = item['quantidade'] * unidades_pack
+                                    if detalhes['tipo_venda'] == "Fardo/Fechado":
+                                        item['custo_total'] = float(detalhes['custo']) * item['quantidade']
+                                    else:
+                                        item['custo_total'] = (float(detalhes['custo']) / unidades_pack) * item['unidades_totais']
+                                    ja_no_carrinho = True
+                                else:
+                                    st.error("Quantidade total excede o estoque disponível!")
+                                    ja_no_carrinho = True
+                        
+                        if not ja_no_carrinho:
+                            if detalhes['tipo_venda'] == "Fardo/Fechado":
+                                custo_calculado = float(detalhes['custo']) * qtd_venda
+                            else:
+                                custo_calculado = (float(detalhes['custo']) / unidades_pack) * (qtd_venda * unidades_pack)
 
-                        st.session_state.carrinho.append({
-                            "produto": prod_selecionado,
-                            "quantidade": qtd_venda,
-                            "preco_venda": float(detalhes['preco_venda']),
-                            "custo_total": custo_calculado,
-                            "unidades_totais": qtd_venda * unidades_pack,
-                            "subtotal": qtd_venda * float(detalhes['preco_venda'])
-                        })
-                    st.rerun()
+                            st.session_state.carrinho.append({
+                                "produto": prod_selecionado,
+                                "quantidade": qtd_venda,
+                                "preco_venda": float(detalhes['preco_venda']),
+                                "custo_total": custo_calculado,
+                                "unidades_totais": qtd_venda * unidades_pack,
+                                "subtotal": qtd_venda * float(detalhes['preco_venda'])
+                            })
+                        st.rerun()
 
         with col_carrinho:
             st.markdown("### 📋 Carrinho de Compras")
             if not st.session_state.carrinho:
                 st.info("O carrinho está vazio.")
+                
+                # 📲 ENVIO DE COMPROVANTE VIA WHATSAPP (TEXTO LIMPO SEM EMOJIS CONFLITANTES)
+                if st.session_state.ultima_venda:
+                    st.success("✨ Venda registrada com sucesso!")
+                    uv = st.session_state.ultima_venda
+                    msg = f"Olá! Seu pedido ficou pronto.\nTotal: R$ {uv['total']:.2f}\nForma de Pagamento: {uv['pagamento']}\nObrigado pela preferência!"
+                    msg_encodada = urllib.parse.quote(msg)
+                    link_wa = f"https://wa.me/{uv['telefone']}?text={msg_encodada}"
+                    
+                    st.link_button("💬 Enviar Comprovante no WhatsApp", link_wa, type="primary")
+                    if st.button("Limpar Alerta"):
+                        st.session_state.ultima_venda = None
+                        st.rerun()
             else:
                 df_cart = pd.DataFrame(st.session_state.carrinho)
-                st.dataframe(df_cart[['produto', 'whitespace' if 'quantidade' not in df_cart else 'quantidade', 'subtotal']].rename(columns={
+                st.dataframe(df_cart[['produto', 'quantidade', 'subtotal']].rename(columns={
                     'produto': 'Item', 'quantidade': 'Qtd', 'subtotal': 'Subtotal (R$)'
                 }), use_container_width=True)
                 
@@ -171,9 +177,26 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     <div class="total-card"><p style="margin:0;">TOTAL DO PEDIDO</p><h2 style="margin:0;color:#2e7d32;">R$ {total_geral:.2f}</h2></div>
                     """, unsafe_allow_html=True)
                 
-                forma_pagamento = st.selectbox("Forma de Pagamento", ["⚡ PIX", "💵 Dinheiro", "💳 Cartão"])
+                # Seleção de cliente para o WhatsApp
+                cliente_id = None
+                telefones_dict = {}
+                if not df_cli_venda.empty:
+                    opcoes_cliente = ["Consumidor Não Identificado"]
+                    for _, r_cli in df_cli_venda.iterrows():
+                        nome_exibir = f"{r_cli['nome']} ({r_cli['whatsapp']})"
+                        opcoes_cliente.append(nome_exibir)
+                        telefones_dict[nome_exibir] = ''.join(filter(str.isdigit, str(r_cli['whatsapp'])))
+                    
+                    cli_selecionado = st.selectbox("Vincular Cliente (Opcional)", opcoes_cliente)
+                    num_telefone = telefones_dict.get(cli_selecionado, "")
+                else:
+                    st.caption("Nenhum cliente cadastrado para vincular.")
+                    num_telefone = ""
                 
-                if forma_pagamento == "💵 Dinheiro":
+                # Texto puro nas opções para evitar falhas no link do WhatsApp
+                forma_pagamento = st.selectbox("Forma de Pagamento", ["PIX", "Dinheiro", "Cartao"])
+                
+                if forma_pagamento == "Dinheiro":
                     pago = st.number_input("Valor Entregue", min_value=float(total_geral), value=float(total_geral))
                     if pago > total_geral:
                         st.success(f"💵 Troco: **R$ {pago - total_geral:.2f}**")
@@ -203,15 +226,76 @@ if tela == "💰 Frente de Caixa (Balcão)":
                                 registrar_movimentacao(session, item['produto'], "VENDA", item['unidades_totais'], estoque_atual, novo_estoque, f"Venda no balcão via {forma_pagamento}")
                             
                             session.commit()
+                        
+                        if num_telefone:
+                            st.session_state.ultima_venda = {"total": total_geral, "telefone": num_telefone, "pagamento": forma_pagamento}
+                        else:
+                            st.session_state.ultima_venda = None
+                            
                         st.session_state.carrinho = []
                         st.balloons()
-                        st.success("Venda registrada com sucesso!")
                         st.rerun()
                     except Exception as err:
                         st.error(f"Falha ao salvar no banco: {err}")
 
 # -----------------------------------------------------------------------------------------
-# TELA 2: CONTROLE DE ESTOQUE
+# TELA 2: CADASTRO DE CLIENTES
+# -----------------------------------------------------------------------------------------
+elif tela == "👥 Cadastro de Clientes":
+    st.title("👥 Gestão e Cadastro de Clientes")
+    
+    try:
+        df_clientes = conn.query("SELECT * FROM clientes ORDER BY nome;", ttl="0s")
+    except Exception as e:
+        st.error(f"Erro ao carregar clientes: {e}")
+        df_clientes = pd.DataFrame()
+        
+    busca_cli = st.text_input("🔍 Buscar Cliente", placeholder="Digite o nome ou bairro do cliente...")
+    if busca_cli and not df_clientes.empty:
+        df_clientes = df_clientes[
+            df_clientes["nome"].str.contains(busca_cli, case=False, na=False) | 
+            df_clientes["bairro"].str.contains(busca_cli, case=False, na=False)
+        ]
+        
+    st.subheader("📋 Clientes Registrados")
+    if not df_clientes.empty:
+        st.dataframe(df_clientes[['nome', 'whatsapp', 'endereco', 'bairro', 'observacoes']].rename(columns={
+            'nome': 'Nome do Cliente', 'whatsapp': 'WhatsApp/Celular', 'endereco': 'Endereço', 'bairro': 'Bairro', 'observacoes': 'Notas/Obs'
+        }), use_container_width=True)
+    else:
+        st.info("Nenhum cliente cadastrado ou encontrado.")
+        
+    st.divider()
+    st.subheader("➕ Registrar Novo Cliente")
+    with st.form("cadastro_cliente"):
+        c_nome = st.text_input("Nome Completo")
+        c_whats = st.text_input("WhatsApp (Ex: 85999999999 - Apenas números com DDD)")
+        c_end = st.text_input("Endereço (Rua, Número, Apto)")
+        c_bairro = st.text_input("Bairro")
+        c_obs = st.text_area("Observações de Entrega / Notas")
+        
+        salvar_cliente = st.form_submit_button("💾 Salvar Cliente")
+        
+        if salvar_cliente and c_nome and c_whats:
+            try:
+                with conn.session as session:
+                    session.execute(
+                        text("""
+                            INSERT INTO clientes (nome, whatsapp, endereco, bairro, observacoes)
+                            VALUES (:nome, :whats, :end, :bairro, :obs);
+                        """),
+                        {"nome": c_nome, "whats": c_whats, "end": c_end, "bairro": c_bairro, "obs": c_obs}
+                    )
+                    session.commit()
+                st.success(f"Cliente '{c_nome}' cadastrado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao cadastrar cliente: {e}")
+        elif salvar_cliente:
+            st.warning("Por favor, preencha pelo menos o Nome e o WhatsApp do cliente.")
+
+# -----------------------------------------------------------------------------------------
+# TELA 3: CONTROLE DE ESTOQUE
 # -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
     st.title("📦 Controle de Estoque Profissional")
@@ -319,7 +403,7 @@ elif tela == "📦 Controle de Estoque":
                 st.error(f"Erro: {e}")
 
 # -----------------------------------------------------------------------------------------
-# TELA 3: EXTRATO DE MOVIMENTAÇÕES
+# TELA 4: EXTRATO DE MOVIMENTAÇÕES
 # -----------------------------------------------------------------------------------------
 elif tela == "📋 Extrato do Estoque":
     st.title("📋 Extrato e Auditoria de Estoque")
@@ -340,7 +424,7 @@ elif tela == "📋 Extrato do Estoque":
         st.dataframe(df_mov_friendly, use_container_width=True)
 
 # -----------------------------------------------------------------------------------------
-# TELA 4: PAINEL FINANCEIRO PRO
+# TELA 5: PAINEL FINANCEIRO PRO
 # -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Dashboard Gerencial")
@@ -381,6 +465,7 @@ else:
         st.divider()
         
         st.subheader("📈 Desempenho de Vendas")
+        
         df_vendas['data_curta'] = df_vendas['data_hora'].str.slice(0, 10)
         df_grafico = df_vendas.groupby('data_curta')[['valor_total', 'lucro']].sum().reset_index()
         df_grafico = df_grafico.rename(columns={'data_curta': 'Data', 'valor_total': 'Faturamento (R$)', 'lucro': 'Lucro Real (R$)'})
