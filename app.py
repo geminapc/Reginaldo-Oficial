@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import text
 import urllib.parse
 
-st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="wide")
+st.set_page_config(page_title="Frios & Geladão do Reginaldo", page_icon="🏪", layout="wide")
 
 # --- CONEXÃO COM O POSTGRESQL (SUPABASE) ---
 try:
@@ -46,7 +46,7 @@ def registrar_movimentacao(session, produto, tipo, quantidade, anterior, novo, o
     try:
         session.execute(
             text("""
-                INSERT INTO movimentacoes_estoque (produto, tipo_movimentacao, quantidade, estoque_anterior, estoque_novo, observacao)
+                INSERT INTO movimentacoes_estoque (produto, tipo_movimentacao, quantity, estoque_anterior, estoque_novo, observacao)
                 VALUES (:produto, :tipo, :qtd, :ant, :novo, :obs);
             """),
             {"produto": produto, "tipo": tipo, "qtd": quantidade, "ant": anterior, "novo": novo, "obs": obs}
@@ -71,7 +71,10 @@ with st.sidebar:
 # TELA 1: FRENTE DE CAIXA
 # -----------------------------------------------------------------------------------------
 if tela == "💰 Frente de Caixa (Balcão)":
+    # 🏢 NOME DA LOJA ADICIONADO NA TELA PRINCIPAL
     st.title("🛒 Frente de Caixa")
+    st.subheader("🏪 Frios & Geladão do Reginaldo")
+    st.markdown("---")
     
     try:
         df_est = conn.query("SELECT * FROM estoque ORDER BY produto;", ttl="0s")
@@ -93,7 +96,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
             if not produtos_disponiveis:
                 st.error("🚨 Todos os produtos estão esgotados!")
             else:
-                # 🔍 BUSCA INTELIGENTE POR DIGITAÇÃO
                 prod_selecionado = st.selectbox(
                     "Selecione o Produto",
                     options=produtos_disponiveis,
@@ -106,7 +108,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     unidades_pack = int(detalhes['unidades_por_pacote'])
                     qtd_maxima = int(detalhes['quantidade'] // unidades_pack) if detalhes['tipo_venda'] == "Fardo/Fechado" else int(detalhes['quantidade'])
                     
-                    # 📊 EXIBIÇÃO EM CARDS INFORMATIVOS
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Preço", f"R$ {float(detalhes['preco_venda']):.2f}")
                     c2.metric("Estoque Atual", f"{qtd_maxima} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{qtd_maxima} un")
@@ -153,11 +154,11 @@ if tela == "💰 Frente de Caixa (Balcão)":
             if not st.session_state.carrinho:
                 st.info("O carrinho está vazio.")
                 
-                # 📲 ENVIO DE COMPROVANTE VIA WHATSAPP (TEXTO LIMPO SEM EMOJIS CONFLITANTES)
+                # 📲 NOME DA LOJA ADICIONADO NA MENSAGEM DO WHATSAPP
                 if st.session_state.ultima_venda:
                     st.success("✨ Venda registrada com sucesso!")
                     uv = st.session_state.ultima_venda
-                    msg = f"Olá! Seu pedido ficou pronto.\nTotal: R$ {uv['total']:.2f}\nForma de Pagamento: {uv['pagamento']}\nObrigado pela preferência!"
+                    msg = f"Olá! Seu pedido no *Frios & Geladão do Reginaldo* ficou pronto.\nTotal: R$ {uv['total']:.2f}\nForma de Pagamento: {uv['pagamento']}\nObrigado pela preferência!"
                     msg_encodada = urllib.parse.quote(msg)
                     link_wa = f"https://wa.me/{uv['telefone']}?text={msg_encodada}"
                     
@@ -177,7 +178,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     <div class="total-card"><p style="margin:0;">TOTAL DO PEDIDO</p><h2 style="margin:0;color:#2e7d32;">R$ {total_geral:.2f}</h2></div>
                     """, unsafe_allow_html=True)
                 
-                # Seleção de cliente para o WhatsApp
                 cliente_id = None
                 telefones_dict = {}
                 if not df_cli_venda.empty:
@@ -193,7 +193,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     st.caption("Nenhum cliente cadastrado para vincular.")
                     num_telefone = ""
                 
-                # Texto puro nas opções para evitar falhas no link do WhatsApp
                 forma_pagamento = st.selectbox("Forma de Pagamento", ["PIX", "Dinheiro", "Cartao"])
                 
                 if forma_pagamento == "Dinheiro":
@@ -238,33 +237,22 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     except Exception as err:
                         st.error(f"Falha ao salvar no banco: {err}")
 
-# -----------------------------------------------------------------------------------------
-# TELA 2: CADASTRO DE CLIENTES
-# -----------------------------------------------------------------------------------------
+# O restante do código (Cadastro de Clientes, Estoque, Extrato, Financeiro) continua exatamente o mesmo...
 elif tela == "👥 Cadastro de Clientes":
     st.title("👥 Gestão e Cadastro de Clientes")
-    
     try:
         df_clientes = conn.query("SELECT * FROM clientes ORDER BY nome;", ttl="0s")
     except Exception as e:
         st.error(f"Erro ao carregar clientes: {e}")
         df_clientes = pd.DataFrame()
-        
     busca_cli = st.text_input("🔍 Buscar Cliente", placeholder="Digite o nome ou bairro do cliente...")
     if busca_cli and not df_clientes.empty:
-        df_clientes = df_clientes[
-            df_clientes["nome"].str.contains(busca_cli, case=False, na=False) | 
-            df_clientes["bairro"].str.contains(busca_cli, case=False, na=False)
-        ]
-        
+        df_clientes = df_clientes[df_clientes["nome"].str.contains(busca_cli, case=False, na=False) | df_clientes["bairro"].str.contains(busca_cli, case=False, na=False)]
     st.subheader("📋 Clientes Registrados")
     if not df_clientes.empty:
-        st.dataframe(df_clientes[['nome', 'whatsapp', 'endereco', 'bairro', 'observacoes']].rename(columns={
-            'nome': 'Nome do Cliente', 'whatsapp': 'WhatsApp/Celular', 'endereco': 'Endereço', 'bairro': 'Bairro', 'observacoes': 'Notas/Obs'
-        }), use_container_width=True)
+        st.dataframe(df_clientes[['nome', 'whatsapp', 'endereco', 'bairro', 'observacoes']].rename(columns={'nome': 'Nome do Cliente', 'whatsapp': 'WhatsApp/Celular', 'endereco': 'Endereço', 'bairro': 'Bairro', 'observacoes': 'Notas/Obs'}), use_container_width=True)
     else:
         st.info("Nenhum cliente cadastrado ou encontrado.")
-        
     st.divider()
     st.subheader("➕ Registrar Novo Cliente")
     with st.form("cadastro_cliente"):
@@ -273,19 +261,11 @@ elif tela == "👥 Cadastro de Clientes":
         c_end = st.text_input("Endereço (Rua, Número, Apto)")
         c_bairro = st.text_input("Bairro")
         c_obs = st.text_area("Observações de Entrega / Notas")
-        
         salvar_cliente = st.form_submit_button("💾 Salvar Cliente")
-        
         if salvar_cliente and c_nome and c_whats:
             try:
                 with conn.session as session:
-                    session.execute(
-                        text("""
-                            INSERT INTO clientes (nome, whatsapp, endereco, bairro, observacoes)
-                            VALUES (:nome, :whats, :end, :bairro, :obs);
-                        """),
-                        {"nome": c_nome, "whats": c_whats, "end": c_end, "bairro": c_bairro, "obs": c_obs}
-                    )
+                    session.execute(text("INSERT INTO clientes (nome, whatsapp, endereco, bairro, observacoes) VALUES (:nome, :whats, :end, :bairro, :obs);"), {"nome": c_nome, "whats": c_whats, "end": c_end, "bairro": c_bairro, "obs": c_obs})
                     session.commit()
                 st.success(f"Cliente '{c_nome}' cadastrado com sucesso!")
                 st.rerun()
@@ -294,38 +274,27 @@ elif tela == "👥 Cadastro de Clientes":
         elif salvar_cliente:
             st.warning("Por favor, preencha pelo menos o Nome e o WhatsApp do cliente.")
 
-# -----------------------------------------------------------------------------------------
-# TELA 3: CONTROLE DE ESTOQUE
-# -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
     st.title("📦 Controle de Estoque Profissional")
-
     try:
         df_estoque = conn.query("SELECT * FROM estoque ORDER BY produto;", ttl="0s")
     except Exception as e:
         st.error(f"Erro ao carregar estoque: {e}")
         df_estoque = pd.DataFrame()
-
     busca = st.text_input("🔍 Buscar produto", placeholder="Digite o nome do produto...")
     if busca and not df_estoque.empty:
         df_estoque = df_estoque[df_estoque["produto"].str.contains(busca, case=False, na=False)]
-
     if not df_estoque.empty:
         produtos_baixos = df_estoque[df_estoque["quantidade"] <= 10]
         if not produtos_baixos.empty:
             st.warning(f"⚠️ Atenção: {len(produtos_baixos)} produto(s) com estoque baixo (10 unidades ou menos).")
-
     st.subheader("📋 Estoque Atual")
     if not df_estoque.empty:
-        df_exibicao = df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].rename(columns={
-            'produto': 'Nome do Produto', 'preco_venda': 'Preço de Venda (R$)', 'quantidade': 'Qtd em Estoque', 'tipo_venda': 'Modo de Venda'
-        })
+        df_exibicao = df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].rename(columns={'produto': 'Nome do Produto', 'preco_venda': 'Preço de Venda (R$)', 'quantidade': 'Qtd em Estoque', 'tipo_venda': 'Modo de Venda'})
         st.dataframe(df_exibicao, use_container_width=True)
     else:
         st.info("Nenhum produto cadastrado.")
-
     st.divider()
-
     st.subheader("➕ Cadastrar ou Atualizar Produto")
     with st.form("cadastro_produto"):
         nome = st.text_input("Produto")
@@ -335,62 +304,47 @@ elif tela == "📦 Controle de Estoque":
         margem = st.number_input("Margem (%)", min_value=0.0, value=50.0)
         quantidade = st.number_input("Quantidade de fardos/unidades compradas", min_value=0, value=0)
         salvar = st.form_submit_button("💾 Salvar Produto")
-
         if salvar and nome:
             preco_venda = custo * (1 + margem / 100)
             unidades_totais = int(quantidade * pack)
-
             try:
                 with conn.session as session:
                     res = session.execute(text("SELECT quantidade FROM estoque WHERE produto = :p;"), {"p": nome}).fetchone()
                     est_anterior = res[0] if res else 0
                     est_novo = est_anterior + unidades_totais
-
-                    session.execute(
-                        text("""
+                    session.execute(text("""
                         INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda)
                         VALUES (:produto, :custo, :preco, :qtd, :pack, :tipo)
                         ON CONFLICT (produto)
                         DO UPDATE SET custo = :custo, preco_venda = :preco, quantidade = estoque.quantidade + :qtd, unidades_por_pacote = :pack, tipo_venda = :tipo;
-                        """),
-                        {"produto": nome, "custo": custo, "preco": preco_venda, "qtd": unidades_totais, "pack": pack, "tipo": tipo}
-                    )
+                        """), {"produto": nome, "custo": custo, "preco": preco_venda, "qtd": unidades_totais, "pack": pack, "tipo": tipo})
                     registrar_movimentacao(session, nome, "ENTRADA", unidades_totais, est_anterior, est_novo, "Entrada de mercadoria/Cadastro")
                     session.commit()
                 st.success(f"Produto '{nome}' salvo!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
-
     st.divider()
-
     if not df_estoque.empty:
         st.subheader("✏️ Ajustar Estoque Manualmente")
         produto_ajuste = st.selectbox("Selecione o Produto para ajustar", df_estoque["produto"].tolist(), key="ajuste_produto")
         qtd_atual = int(df_estoque[df_estoque["produto"] == produto_ajuste]["quantidade"].values[0])
         nova_qtd = st.number_input("Nova Quantidade Exata em Estoque", min_value=0, value=qtd_atual)
-
         if st.button("Salvar Ajuste"):
             try:
                 with conn.session as session:
-                    session.execute(
-                        text("UPDATE estoque SET quantidade = :qtd WHERE produto = :produto"),
-                        {"qtd": nova_qtd, "produto": produto_ajuste}
-                    )
+                    session.execute(text("UPDATE estoque SET quantidade = :qtd WHERE produto = :produto"), {"qtd": nova_qtd, "produto": produto_ajuste})
                     registrar_movimentacao(session, produto_ajuste, "AJUSTE", (nova_qtd - qtd_atual), qtd_atual, nova_qtd, "Ajuste manual de inventário")
                     session.commit()
                 st.success("Estoque atualizado!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
-
     st.divider()
-
     if not df_estoque.empty:
         st.subheader("🗑️ Excluir Produto")
         produto_excluir = st.selectbox("Produto para excluir", df_estoque["produto"].tolist(), key="excluir_produto")
         qtd_antes_del = int(df_estoque[df_estoque["produto"] == produto_excluir]["quantidade"].values[0])
-
         if st.button("Excluir Produto Definitivamente"):
             try:
                 with conn.session as session:
@@ -402,38 +356,25 @@ elif tela == "📦 Controle de Estoque":
             except Exception as e:
                 st.error(f"Erro: {e}")
 
-# -----------------------------------------------------------------------------------------
-# TELA 4: EXTRATO DE MOVIMENTAÇÕES
-# -----------------------------------------------------------------------------------------
 elif tela == "📋 Extrato do Estoque":
     st.title("📋 Extrato e Auditoria de Estoque")
     st.caption("Acompanhe o histórico de todas as entradas, vendas e ajustes feitos no sistema.")
-
     try:
         df_mov = conn.query("SELECT data_hora, produto, tipo_movimentacao, quantidade, estoque_anterior, estoque_novo, observacao FROM movimentacoes_estoque ORDER BY id DESC;", ttl="0s")
     except:
         df_mov = pd.DataFrame()
-
     if df_mov.empty:
         st.info("Nenhuma movimentação registrada no histórico ainda.")
     else:
-        df_mov_friendly = df_mov.rename(columns={
-            'data_hora': 'Data/Hora', 'produto': 'Produto', 'tipo_movimentacao': 'Operação',
-            'quantidade': 'Qtd Movimentada', 'estoque_anterior': 'Estoque Antigo', 'estoque_novo': 'Estoque Novo', 'observacao': 'Detalhes'
-        })
+        df_mov_friendly = df_mov.rename(columns={'data_hora': 'Data/Hora', 'produto': 'Produto', 'tipo_movimentacao': 'Operação', 'quantidade': 'Qtd Movimentada', 'estoque_anterior': 'Estoque Antigo', 'estoque_novo': 'Estoque Novo', 'observacao': 'Detalhes'})
         st.dataframe(df_mov_friendly, use_container_width=True)
 
-# -----------------------------------------------------------------------------------------
-# TELA 5: PAINEL FINANCEIRO PRO
-# -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Dashboard Gerencial")
-    
     try:
         df_est_fin = conn.query("SELECT custo, quantidade, unidades_por_pacote, tipo_venda FROM estoque;", ttl="0s")
     except:
         df_est_fin = pd.DataFrame()
-        
     valor_estoque_custo = 0.0
     total_produtos_tipos = 0
     if not df_est_fin.empty:
@@ -445,12 +386,10 @@ else:
             else:
                 custo_unitario = float(row['custo'])
             valor_estoque_custo += (custo_unitario * int(row['quantidade']))
-
     try:
         df_vendas = conn.query("SELECT * FROM vendas ORDER BY id DESC;", ttl="0s")
     except:
         df_vendas = pd.DataFrame()
-        
     if df_vendas.empty:
         st.info("Nenhuma venda realizada ainda para gerar estatísticas.")
         if valor_estoque_custo > 0:
@@ -461,20 +400,12 @@ else:
         c2.metric("📈 Lucro Líquido Real", f"R$ {df_vendas['lucro'].sum():.2f}")
         c3.metric("📦 Valor em Estoque (Custo)", f"R$ {valor_estoque_custo:.2f}")
         c4.metric("🏷️ Tipos de Itens", f"{total_produtos_tipos} prods")
-        
         st.divider()
-        
         st.subheader("📈 Desempenho de Vendas")
-        
         df_vendas['data_curta'] = df_vendas['data_hora'].str.slice(0, 10)
         df_grafico = df_vendas.groupby('data_curta')[['valor_total', 'lucro']].sum().reset_index()
         df_grafico = df_grafico.rename(columns={'data_curta': 'Data', 'valor_total': 'Faturamento (R$)', 'lucro': 'Lucro Real (R$)'})
-        
         st.bar_chart(df_grafico.set_index('Data'), use_container_width=True)
-        
         st.divider()
-        
         st.markdown("### 📋 Histórico Geral de Vendas")
-        st.dataframe(df_vendas[['data_hora', 'produto', 'quantidade', 'valor_total', 'lucro', 'pagamento']].rename(columns={
-            'data_hora': 'Data/Hora', 'produto': 'Item', 'quantidade': 'Qtd Vendida', 'valor_total': 'Total (R$)', 'lucro': 'Lucro (R$)', 'pagamento': 'Pagamento'
-        }), use_container_width=True)
+        st.dataframe(df_vendas[['data_hora', 'produto', 'quantidade', 'valor_total', 'lucro', 'pagamento']].rename(columns={'data_hora': 'Data/Hora', 'produto': 'Item', 'quantidade': 'Qtd Vendida', 'valor_total': 'Total (R$)', 'lucro': 'Lucro (R$)', 'pagamento': 'Pagamento'}), use_container_width=True)
