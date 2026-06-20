@@ -71,7 +71,6 @@ with st.sidebar:
 # TELA 1: FRENTE DE CAIXA
 # -----------------------------------------------------------------------------------------
 if tela == "💰 Frente de Caixa (Balcão)":
-    # 🏢 NOME DA LOJA ADICIONADO NA TELA PRINCIPAL
     st.title("🛒 Frente de Caixa")
     st.subheader("🏪 Frios & Geladão do Reginaldo")
     st.markdown("---")
@@ -154,7 +153,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
             if not st.session_state.carrinho:
                 st.info("O carrinho está vazio.")
                 
-                # 📲 NOME DA LOJA ADICIONADO NA MENSAGEM DO WHATSAPP
                 if st.session_state.ultima_venda:
                     st.success("✨ Venda registrada com sucesso!")
                     uv = st.session_state.ultima_venda
@@ -237,7 +235,9 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     except Exception as err:
                         st.error(f"Falha ao salvar no banco: {err}")
 
-# O restante do código (Cadastro de Clientes, Estoque, Extrato, Financeiro) continua exatamente o mesmo...
+# -----------------------------------------------------------------------------------------
+# TELA 2: CADASTRO DE CLIENTES
+# -----------------------------------------------------------------------------------------
 elif tela == "👥 Cadastro de Clientes":
     st.title("👥 Gestão e Cadastro de Clientes")
     try:
@@ -274,6 +274,9 @@ elif tela == "👥 Cadastro de Clientes":
         elif salvar_cliente:
             st.warning("Por favor, preencha pelo menos o Nome e o WhatsApp do cliente.")
 
+# -----------------------------------------------------------------------------------------
+# TELA 3: CONTROLE DE ESTOQUE (CORRIGIDA COM CASAS DECIMAIS E CÁLCULO INVERSO)
+# -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
     st.title("📦 Controle de Estoque Profissional")
     try:
@@ -281,49 +284,78 @@ elif tela == "📦 Controle de Estoque":
     except Exception as e:
         st.error(f"Erro ao carregar estoque: {e}")
         df_estoque = pd.DataFrame()
+
     busca = st.text_input("🔍 Buscar produto", placeholder="Digite o nome do produto...")
     if busca and not df_estoque.empty:
         df_estoque = df_estoque[df_estoque["produto"].str.contains(busca, case=False, na=False)]
+
     if not df_estoque.empty:
         produtos_baixos = df_estoque[df_estoque["quantidade"] <= 10]
         if not produtos_baixos.empty:
             st.warning(f"⚠️ Atenção: {len(produtos_baixos)} produto(s) com estoque baixo (10 unidades ou menos).")
+
     st.subheader("📋 Estoque Atual")
     if not df_estoque.empty:
-        df_exibicao = df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].rename(columns={'produto': 'Nome do Produto', 'preco_venda': 'Preço de Venda (R$)', 'quantidade': 'Qtd em Estoque', 'tipo_venda': 'Modo de Venda'})
+        # Arredonda o DataFrame para exibição limpa de 2 casas decimais
+        df_exibicao = df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].copy()
+        df_exibicao['preco_venda'] = df_exibicao['preco_venda'].map(lambda x: f"R$ {float(x):.2f}")
+        
+        df_exibicao = df_exibicao.rename(columns={
+            'produto': 'Nome do Produto', 
+            'preco_venda': 'Preço de Venda', 
+            'quantidade': 'Qtd em Estoque', 
+            'tipo_venda': 'Modo de Venda'
+        })
         st.dataframe(df_exibicao, use_container_width=True)
     else:
         st.info("Nenhum produto cadastrado.")
+
     st.divider()
+
     st.subheader("➕ Cadastrar ou Atualizar Produto")
     with st.form("cadastro_produto"):
         nome = st.text_input("Produto")
         tipo = st.selectbox("Tipo de Venda", ["Unidade Avulsa", "Fardo/Fechado"])
         pack = st.number_input("Unidades por pacote/fardo", min_value=1, value=1)
-        custo = st.number_input("Preço de Custo Total (R$)", min_value=0.0, value=0.0)
-        margem = st.number_input("Margem (%)", min_value=0.0, value=50.0)
+        
+        # 💵 NOVA LÓGICA DE PREÇOS PROPAGADA AQUI
+        custo = st.number_input("Preço de Custo Total (R$)", min_value=0.0, value=0.0, step=0.01)
+        preco_venda_desejado = st.number_input("Preço de Venda Desejado (R$)", min_value=0.0, value=0.0, step=0.01)
+        
         quantidade = st.number_input("Quantidade de fardos/unidades compradas", min_value=0, value=0)
         salvar = st.form_submit_button("💾 Salvar Produto")
+
+        # Exibe prévia dos cálculos em tempo real antes de salvar
+        if custo > 0 and preco_venda_desejado > 0:
+            custo_unitario = custo / pack
+            lucro_unitario = preco_venda_desejado - custo_unitario
+            margem_calculada = (lucro_unitario / custo_unitario) * 100 if custo_unitario > 0 else 0.0
+            st.info(f"📊 **Análise do Preço:** Custo Unitário: R$ {custo_unitario:.2f} | Lucro Real por Unidade: R$ {lucro_unitario:.2f} | Margem Calculada: {margem_calculada:.1f}%")
+
         if salvar and nome:
-            preco_venda = custo * (1 + margem / 100)
+            # Trava o preço final com precisão de duas casas decimais
+            preco_venda_final = round(float(preco_venda_desejado), 2)
             unidades_totais = int(quantidade * pack)
+
             try:
                 with conn.session as session:
                     res = session.execute(text("SELECT quantidade FROM estoque WHERE produto = :p;"), {"p": nome}).fetchone()
                     est_anterior = res[0] if res else 0
                     est_novo = est_anterior + unidades_totais
+                    
                     session.execute(text("""
                         INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda)
                         VALUES (:produto, :custo, :preco, :qtd, :pack, :tipo)
                         ON CONFLICT (produto)
                         DO UPDATE SET custo = :custo, preco_venda = :preco, quantidade = estoque.quantidade + :qtd, unidades_por_pacote = :pack, tipo_venda = :tipo;
-                        """), {"produto": nome, "custo": custo, "preco": preco_venda, "qtd": unidades_totais, "pack": pack, "tipo": tipo})
+                        """), {"produto": nome, "custo": custo, "preco": preco_venda_final, "qtd": unidades_totais, "pack": pack, "tipo": tipo})
                     registrar_movimentacao(session, nome, "ENTRADA", unidades_totais, est_anterior, est_novo, "Entrada de mercadoria/Cadastro")
                     session.commit()
-                st.success(f"Produto '{nome}' salvo!")
+                st.success(f"Produto '{nome}' salvo com sucesso com preço de R$ {preco_venda_final:.2f}!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
+
     st.divider()
     if not df_estoque.empty:
         st.subheader("✏️ Ajustar Estoque Manualmente")
@@ -356,6 +388,9 @@ elif tela == "📦 Controle de Estoque":
             except Exception as e:
                 st.error(f"Erro: {e}")
 
+# -----------------------------------------------------------------------------------------
+# TELA 4: EXTRATO DE MOVIMENTAÇÕES
+# -----------------------------------------------------------------------------------------
 elif tela == "📋 Extrato do Estoque":
     st.title("📋 Extrato e Auditoria de Estoque")
     st.caption("Acompanhe o histórico de todas as entradas, vendas e ajustes feitos no sistema.")
@@ -369,6 +404,9 @@ elif tela == "📋 Extrato do Estoque":
         df_mov_friendly = df_mov.rename(columns={'data_hora': 'Data/Hora', 'produto': 'Produto', 'tipo_movimentacao': 'Operação', 'quantidade': 'Qtd Movimentada', 'estoque_anterior': 'Estoque Antigo', 'estoque_novo': 'Estoque Novo', 'observacao': 'Detalhes'})
         st.dataframe(df_mov_friendly, use_container_width=True)
 
+# -----------------------------------------------------------------------------------------
+# TELA 5: PAINEL FINANCEIRO
+# -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Dashboard Gerencial")
     try:
