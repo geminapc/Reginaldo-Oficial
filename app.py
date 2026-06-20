@@ -275,7 +275,7 @@ elif tela == "👥 Cadastro de Clientes":
             st.warning("Por favor, preencha pelo menos o Nome e o WhatsApp do cliente.")
 
 # -----------------------------------------------------------------------------------------
-# TELA 3: CONTROLE DE ESTOQUE (CORRIGIDA COM CASAS DECIMAIS E CÁLCULO INVERSO)
+# TELA 3: CONTROLE DE ESTOQUE
 # -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
     st.title("📦 Controle de Estoque Profissional")
@@ -296,7 +296,6 @@ elif tela == "📦 Controle de Estoque":
 
     st.subheader("📋 Estoque Atual")
     if not df_estoque.empty:
-        # Arredonda o DataFrame para exibição limpa de 2 casas decimais
         df_exibicao = df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].copy()
         df_exibicao['preco_venda'] = df_exibicao['preco_venda'].map(lambda x: f"R$ {float(x):.2f}")
         
@@ -318,14 +317,12 @@ elif tela == "📦 Controle de Estoque":
         tipo = st.selectbox("Tipo de Venda", ["Unidade Avulsa", "Fardo/Fechado"])
         pack = st.number_input("Unidades por pacote/fardo", min_value=1, value=1)
         
-        # 💵 NOVA LÓGICA DE PREÇOS PROPAGADA AQUI
         custo = st.number_input("Preço de Custo Total (R$)", min_value=0.0, value=0.0, step=0.01)
         preco_venda_desejado = st.number_input("Preço de Venda Desejado (R$)", min_value=0.0, value=0.0, step=0.01)
         
         quantidade = st.number_input("Quantidade de fardos/unidades compradas", min_value=0, value=0)
         salvar = st.form_submit_button("💾 Salvar Produto")
 
-        # Exibe prévia dos cálculos em tempo real antes de salvar
         if custo > 0 and preco_venda_desejado > 0:
             custo_unitario = custo / pack
             lucro_unitario = preco_venda_desejado - custo_unitario
@@ -333,7 +330,6 @@ elif tela == "📦 Controle de Estoque":
             st.info(f"📊 **Análise do Preço:** Custo Unitário: R$ {custo_unitario:.2f} | Lucro Real por Unidade: R$ {lucro_unitario:.2f} | Margem Calculada: {margem_calculada:.1f}%")
 
         if salvar and nome:
-            # Trava o preço final com precisão de duas casas decimais
             preco_venda_final = round(float(preco_venda_desejado), 2)
             unidades_totais = int(quantidade * pack)
 
@@ -357,21 +353,47 @@ elif tela == "📦 Controle de Estoque":
                 st.error(f"Erro: {e}")
 
     st.divider()
+    
+    # ✏️ SEÇÃO DE AJUSTE MANUAL (ATUALIZADA COM MODIFICAÇÃO DE PREÇO)
     if not df_estoque.empty:
-        st.subheader("✏️ Ajustar Estoque Manualmente")
+        st.subheader("✏️ Ajustar Estoque ou Preço Manualmente")
         produto_ajuste = st.selectbox("Selecione o Produto para ajustar", df_estoque["produto"].tolist(), key="ajuste_produto")
-        qtd_atual = int(df_estoque[df_estoque["produto"] == produto_ajuste]["quantidade"].values[0])
-        nova_qtd = st.number_input("Nova Quantidade Exata em Estoque", min_value=0, value=qtd_atual)
-        if st.button("Salvar Ajuste"):
+        
+        # Pega os valores atuais direto do banco
+        dados_prod = df_estoque[df_estoque["produto"] == produto_ajuste].iloc[0]
+        qtd_atual = int(dados_prod["quantidade"])
+        preco_atual = float(dados_prod["preco_venda"])
+        
+        # Cria dois campos lado a lado: um para a quantidade e outro para o preço
+        col_aj1, col_aj2 = st.columns(2)
+        with col_aj1:
+            nova_qtd = st.number_input("Nova Quantidade Exata em Estoque", min_value=0, value=qtd_atual)
+        with col_aj2:
+            novo_preco = st.number_input("Novo Preço de Venda (R$)", min_value=0.0, value=preco_atual, step=0.01)
+            
+        if st.button("Salvar Ajustes"):
             try:
+                preco_final_ajustado = round(float(novo_preco), 2)
                 with conn.session as session:
-                    session.execute(text("UPDATE estoque SET quantidade = :qtd WHERE produto = :produto"), {"qtd": nova_qtd, "produto": produto_ajuste})
-                    registrar_movimentacao(session, produto_ajuste, "AJUSTE", (nova_qtd - qtd_atual), qtd_atual, nova_qtd, "Ajuste manual de inventário")
+                    session.execute(
+                        text("UPDATE estoque SET quantidade = :qtd, preco_venda = :preco WHERE produto = :produto"),
+                        {"qtd": nova_qtd, "preco": preco_final_ajustado, "produto": produto_ajuste}
+                    )
+                    
+                    # Cria a observação da auditoria dinamicamente
+                    obs_ajuste = "Ajuste manual:"
+                    if nova_qtd != qtd_atual:
+                        obs_ajuste += f" Qtd mudou de {qtd_atual} para {nova_qtd}."
+                    if preco_final_ajustado != preco_atual:
+                        obs_ajuste += f" Preço mudou de R$ {preco_atual:.2f} para R$ {preco_final_ajustado:.2f}."
+                        
+                    registrar_movimentacao(session, produto_ajuste, "AJUSTE", (nova_qtd - qtd_atual), qtd_atual, nova_qtd, obs_ajuste)
                     session.commit()
-                st.success("Estoque atualizado!")
+                st.success(f"Alterações salvas! Estoque: {nova_qtd} un | Preço: R$ {preco_final_ajustado:.2f}")
                 st.rerun()
             except Exception as e:
-                st.error(f"Erro: {e}")
+                st.error(f"Erro ao salvar alterações: {e}")
+                
     st.divider()
     if not df_estoque.empty:
         st.subheader("🗑️ Excluir Produto")
