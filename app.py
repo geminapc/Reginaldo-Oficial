@@ -46,7 +46,7 @@ def registrar_movimentacao(session, produto, tipo, quantidade, anterior, novo, o
     try:
         session.execute(
             text("""
-                INSERT INTO movimentacoes_estoque (produto, tipo_movimentacao, quantity, estoque_anterior, estoque_novo, observacao)
+                INSERT INTO movimentacoes_estoque (produto, tipo_movimentacao, quantidade, estoque_anterior, estoque_novo, observacao)
                 VALUES (:produto, :tipo, :qtd, :ant, :novo, :obs);
             """),
             {"produto": produto, "tipo": tipo, "qtd": quantidade, "ant": anterior, "novo": novo, "obs": obs}
