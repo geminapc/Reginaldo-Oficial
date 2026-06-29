@@ -92,7 +92,7 @@ if tela == "💰 Frente de Caixa (Balcão)":
             st.markdown("### 1. Adicionar Produto")
             produtos_disponiveis = df_est[df_est['quantidade'] > 0]['produto'].tolist()
             
-            if not produtos_disponiveis:
+            if not_produtos_disponiveis:
                 st.error("🚨 Todos os produtos estão esgotados!")
             else:
                 prod_selecionado = st.selectbox(
@@ -275,7 +275,7 @@ elif tela == "👥 Cadastro de Clientes":
             st.warning("Por favor, preencha pelo menos o Nome e o WhatsApp do cliente.")
 
 # -----------------------------------------------------------------------------------------
-# TELA 3: CONTROLE DE ESTOQUE
+# TELA 3: CONTROLE DE ESTOQUE (ATUALIZADA COM MODIFICAÇÃO EM CASCATA DE NOMES)
 # -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
     st.title("📦 Controle de Estoque Profissional")
@@ -354,17 +354,15 @@ elif tela == "📦 Controle de Estoque":
 
     st.divider()
     
-    # ✏️ SEÇÃO DE AJUSTE MANUAL (ATUALIZADA COM MODIFICAÇÃO DE PREÇO)
+    # ✏️ SEÇÃO 1: AJUSTAR ESTOQUE OU PREÇO MANUALMENTE
     if not df_estoque.empty:
         st.subheader("✏️ Ajustar Estoque ou Preço Manualmente")
         produto_ajuste = st.selectbox("Selecione o Produto para ajustar", df_estoque["produto"].tolist(), key="ajuste_produto")
         
-        # Pega os valores atuais direto do banco
         dados_prod = df_estoque[df_estoque["produto"] == produto_ajuste].iloc[0]
         qtd_atual = int(dados_prod["quantidade"])
         preco_atual = float(dados_prod["preco_venda"])
         
-        # Cria dois campos lado a lado: um para a quantidade e outro para o preço
         col_aj1, col_aj2 = st.columns(2)
         with col_aj1:
             nova_qtd = st.number_input("Nova Quantidade Exata em Estoque", min_value=0, value=qtd_atual)
@@ -380,7 +378,6 @@ elif tela == "📦 Controle de Estoque":
                         {"qtd": nova_qtd, "preco": preco_final_ajustado, "produto": produto_ajuste}
                     )
                     
-                    # Cria a observação da auditoria dinamicamente
                     obs_ajuste = "Ajuste manual:"
                     if nova_qtd != qtd_atual:
                         obs_ajuste += f" Qtd mudou de {qtd_atual} para {nova_qtd}."
@@ -394,6 +391,45 @@ elif tela == "📦 Controle de Estoque":
             except Exception as e:
                 st.error(f"Erro ao salvar alterações: {e}")
                 
+    st.divider()
+
+    # 📝 SEÇÃO 2: CORRIGIR NOME DO PRODUTO (NOVA FUNÇÃO EM CASCATA)
+    if not df_estoque.empty:
+        st.subheader("📝 Corrigir Nome do Produto (Erros de Digitação)")
+        st.caption("Esta função altera o nome do produto no Estoque e também corrige os históricos antigos de Vendas e Extratos automaticamente.")
+        
+        produto_nome_antigo = st.selectbox("Selecione o produto com nome errado", df_estoque["produto"].tolist(), key="nome_errado_produto")
+        novo_nome_correto = st.text_input("Digite o Nome Correto do Produto", value=produto_nome_antigo)
+        
+        if st.button("💾 Confirmar Correção do Nome"):
+            if novo_nome_correto.strip() == "" or novo_nome_correto == produto_nome_antigo:
+                st.warning("Por favor, digite um novo nome diferente do atual.")
+            else:
+                try:
+                    with conn.session as session:
+                        # 1. Atualiza na tabela de estoque
+                        session.execute(
+                            text("UPDATE estoque SET produto = :novo WHERE produto = :antigo;"),
+                            {"novo": novo_nome_correto, "antigo": produto_nome_antigo}
+                        )
+                        # 2. Atualiza na tabela de vendas para não quebrar o financeiro
+                        session.execute(
+                            text("UPDATE vendas SET produto = :novo WHERE produto = :antigo;"),
+                            {"novo": novo_nome_correto, "antigo": produto_nome_antigo}
+                        )
+                        # 3. Atualiza na tabela de extrato/movimentações para manter os logs certos
+                        session.execute(
+                            text("UPDATE movimentacoes_estoque SET produto = :novo WHERE produto = :antigo;"),
+                            {"novo": novo_nome_correto, "antigo": produto_nome_antigo}
+                        )
+                        
+                        registrar_movimentacao(session, novo_nome_correto, "AJUSTE", 0, 0, 0, f"Nome corrigido de '{produto_nome_antigo}' para '{novo_nome_correto}'")
+                        session.commit()
+                    st.success(f"Nome corrigido com sucesso para '{novo_nome_correto}' em todo o sistema!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao corrigir o nome do produto: {e}")
+
     st.divider()
     if not df_estoque.empty:
         st.subheader("🗑️ Excluir Produto")
@@ -410,9 +446,7 @@ elif tela == "📦 Controle de Estoque":
             except Exception as e:
                 st.error(f"Erro: {e}")
 
-# -----------------------------------------------------------------------------------------
-# TELA 4: EXTRATO DE MOVIMENTAÇÕES
-# -----------------------------------------------------------------------------------------
+# O restante do código (Extrato e Painel Financeiro) continua o mesmo...
 elif tela == "📋 Extrato do Estoque":
     st.title("📋 Extrato e Auditoria de Estoque")
     st.caption("Acompanhe o histórico de todas as entradas, vendas e ajustes feitos no sistema.")
@@ -426,9 +460,6 @@ elif tela == "📋 Extrato do Estoque":
         df_mov_friendly = df_mov.rename(columns={'data_hora': 'Data/Hora', 'produto': 'Produto', 'tipo_movimentacao': 'Operação', 'quantidade': 'Qtd Movimentada', 'estoque_anterior': 'Estoque Antigo', 'estoque_novo': 'Estoque Novo', 'observacao': 'Detalhes'})
         st.dataframe(df_mov_friendly, use_container_width=True)
 
-# -----------------------------------------------------------------------------------------
-# TELA 5: PAINEL FINANCEIRO
-# -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Dashboard Gerencial")
     try:
