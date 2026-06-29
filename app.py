@@ -92,7 +92,7 @@ if tela == "💰 Frente de Caixa (Balcão)":
             st.markdown("### 1. Adicionar Produto")
             produtos_disponiveis = df_est[df_est['quantidade'] > 0]['produto'].tolist()
             
-            if not_produtos_disponiveis:
+            if not produtos_disponiveis:
                 st.error("🚨 Todos os produtos estão esgotados!")
             else:
                 prod_selecionado = st.selectbox(
