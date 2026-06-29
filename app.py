@@ -275,7 +275,7 @@ elif tela == "👥 Cadastro de Clientes":
             st.warning("Por favor, preencha pelo menos o Nome e o WhatsApp do cliente.")
 
 # -----------------------------------------------------------------------------------------
-# TELA 3: CONTROLE DE ESTOQUE (ATUALIZADA COM MODIFICAÇÃO EM CASCATA DE NOMES)
+# TELA 3: CONTROLE DE ESTOQUE
 # -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
     st.title("📦 Controle de Estoque Profissional")
@@ -354,7 +354,6 @@ elif tela == "📦 Controle de Estoque":
 
     st.divider()
     
-    # ✏️ SEÇÃO 1: AJUSTAR ESTOQUE OU PREÇO MANUALMENTE
     if not df_estoque.empty:
         st.subheader("✏️ Ajustar Estoque ou Preço Manualmente")
         produto_ajuste = st.selectbox("Selecione o Produto para ajustar", df_estoque["produto"].tolist(), key="ajuste_produto")
@@ -393,7 +392,6 @@ elif tela == "📦 Controle de Estoque":
                 
     st.divider()
 
-    # 📝 SEÇÃO 2: CORRIGIR NOME DO PRODUTO (NOVA FUNÇÃO EM CASCATA)
     if not df_estoque.empty:
         st.subheader("📝 Corrigir Nome do Produto (Erros de Digitação)")
         st.caption("Esta função altera o nome do produto no Estoque e também corrige os históricos antigos de Vendas e Extratos automaticamente.")
@@ -407,17 +405,14 @@ elif tela == "📦 Controle de Estoque":
             else:
                 try:
                     with conn.session as session:
-                        # 1. Atualiza na tabela de estoque
                         session.execute(
                             text("UPDATE estoque SET produto = :novo WHERE produto = :antigo;"),
                             {"novo": novo_nome_correto, "antigo": produto_nome_antigo}
                         )
-                        # 2. Atualiza na tabela de vendas para não quebrar o financeiro
                         session.execute(
                             text("UPDATE vendas SET produto = :novo WHERE produto = :antigo;"),
                             {"novo": novo_nome_correto, "antigo": produto_nome_antigo}
                         )
-                        # 3. Atualiza na tabela de extrato/movimentações para manter os logs certos
                         session.execute(
                             text("UPDATE movimentacoes_estoque SET produto = :novo WHERE produto = :antigo;"),
                             {"novo": novo_nome_correto, "antigo": produto_nome_antigo}
@@ -446,7 +441,9 @@ elif tela == "📦 Controle de Estoque":
             except Exception as e:
                 st.error(f"Erro: {e}")
 
-# O restante do código (Extrato e Painel Financeiro) continua o mesmo...
+# -----------------------------------------------------------------------------------------
+# TELA 4: EXTRATO DE MOVIMENTAÇÕES
+# -----------------------------------------------------------------------------------------
 elif tela == "📋 Extrato do Estoque":
     st.title("📋 Extrato e Auditoria de Estoque")
     st.caption("Acompanhe o histórico de todas as entradas, vendas e ajustes feitos no sistema.")
@@ -460,6 +457,9 @@ elif tela == "📋 Extrato do Estoque":
         df_mov_friendly = df_mov.rename(columns={'data_hora': 'Data/Hora', 'produto': 'Produto', 'tipo_movimentacao': 'Operação', 'quantidade': 'Qtd Movimentada', 'estoque_anterior': 'Estoque Antigo', 'estoque_novo': 'Estoque Novo', 'observacao': 'Detalhes'})
         st.dataframe(df_mov_friendly, use_container_width=True)
 
+# -----------------------------------------------------------------------------------------
+# TELA 5: PAINEL FINANCEIRO CORRIGIDO (BLINDADO CONTRA ERRO DE DATETIME)
+# -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Dashboard Gerencial")
     try:
@@ -481,6 +481,7 @@ else:
         df_vendas = conn.query("SELECT * FROM vendas ORDER BY id DESC;", ttl="0s")
     except:
         df_vendas = pd.DataFrame()
+        
     if df_vendas.empty:
         st.info("Nenhuma venda realizada ainda para gerar estatísticas.")
         if valor_estoque_custo > 0:
@@ -493,7 +494,10 @@ else:
         c4.metric("🏷️ Tipos de Itens", f"{total_produtos_tipos} prods")
         st.divider()
         st.subheader("📈 Desempenho de Vendas")
-        df_vendas['data_curta'] = df_vendas['data_hora'].str.slice(0, 10)
+        
+        # 🛡️ SOLUÇÃO: Converte para texto de forma segura antes de cortar os 10 caracteres da data
+        df_vendas['data_curta'] = df_vendas['data_hora'].astype(str).str.slice(0, 10)
+        
         df_grafico = df_vendas.groupby('data_curta')[['valor_total', 'lucro']].sum().reset_index()
         df_grafico = df_grafico.rename(columns={'data_curta': 'Data', 'valor_total': 'Faturamento (R$)', 'lucro': 'Lucro Real (R$)'})
         st.bar_chart(df_grafico.set_index('Data'), use_container_width=True)
