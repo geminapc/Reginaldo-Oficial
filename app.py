@@ -278,7 +278,48 @@ elif tela == "📦 Controle de Estoque":
         st.dataframe(df_exibicao.rename(columns={'produto': 'Nome do Produto', 'codigo_barras': 'Código de Barras', 'preco_venda': 'Preço de Venda', 'quantidade': 'Qtd em Estoque', 'tipo_venda': 'Modo de Venda'}), use_container_width=True)
 
     st.divider()
-    st.subheader("➕ Cadastrar ou Atualizar Produto")
+    
+    st.subheader("📥 Importar Lista de Produtos via Excel (CSV)")
+    st.caption("A planilha deve conter exatamente as colunas: produto, codigo_barras, tipo_venda, unidades_por_pacote, custo, preco_venda")
+    
+    arquivo_upload = st.file_uploader("Selecione o arquivo .csv gerado pelo Excel", type=["csv"])
+    if arquivo_upload is not None:
+        try:
+            df_importado = pd.read_csv(arquivo_upload)
+            st.markdown("**Prévia dos produtos encontrados na sua planilha:**")
+            st.dataframe(df_importado.head(5), use_container_width=True)
+            
+            if st.button("🚀 Confirmar e Enviar Planilha para o Banco de Dados"):
+                colunas_obrigatorias = ['produto', 'tipo_venda', 'unidades_por_pacote', 'custo', 'preco_venda']
+                if not all(col in df_importado.columns for col in colunas_obrigatorias):
+                    st.error("🚨 Erro! Verifique se os nomes das colunas na sua planilha estão idênticos aos exigidos.")
+                else:
+                    contador = 0
+                    with conn.session as session:
+                        for _, row_plan in df_importado.iterrows():
+                            cod_b = str(row_plan['codigo_barras']).strip() if 'codigo_barras' in df_importado.columns and pd.notna(row_plan['codigo_barras']) else None
+                            
+                            session.execute(text("""
+                                INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda, codigo_barras)
+                                VALUES (:produto, :custo, :preco, 0, :pack, :tipo, :cod)
+                                ON CONFLICT (produto) DO UPDATE SET custo = :custo, preco_venda = :preco, unidades_por_pacote = :pack, tipo_venda = :tipo, codigo_barras = :cod;
+                            """), {
+                                "produto": str(row_plan['produto']).strip(),
+                                "custo": float(row_plan['custo']),
+                                "preco": float(row_plan['preco_venda']),
+                                "pack": int(row_plan['unidades_por_pacote']),
+                                "tipo": str(row_plan['tipo_venda']).strip(),
+                                "cod": cod_b
+                            })
+                            contador += 1
+                        session.commit()
+                    st.success(f"🎉 Sucesso! {contador} produtos foram importados/atualizados no estoque do banco de dados!")
+                    st.rerun()
+        except Exception as e_imp:
+            st.error(f"Erro ao ler arquivo: {e_imp}")
+
+    st.divider()
+    st.subheader("➕ Cadastrar ou Atualizar Produto Manualmente")
     with st.form("cadastro_produto"):
         nome = st.text_input("Nome do Produto")
         cod_barras = st.text_input("🏷️ Código de Barras (Clique aqui e bipe)")
@@ -369,7 +410,7 @@ elif tela == "📋 Extrato do Estoque":
     else: st.dataframe(df_mov.rename(columns={'data_hora': 'Data/Hora', 'produto': 'Produto', 'tipo_movimentacao': 'Operação', 'quantidade': 'Qtd Movimentada', 'estoque_anterior': 'Estoque Antigo', 'estoque_novo': 'Estoque Novo', 'observacao': 'Detalhes'}), use_container_width=True)
 
 # -----------------------------------------------------------------------------------------
-# TELA 5: PAINEL FINANCEIRO & RELATÓRIOS MENSAIS DE INVENTÁRIO
+# TELA 5: PAINEL FINANCEIRO & RELATÓRIOS (COM RELATÓRIO DE LUCRO DIÁRIO)
 # -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Fechamento de Inventário")
@@ -389,11 +430,8 @@ else:
         for _, row in df_est_fin.iterrows():
             u_pack = int(row['unidades_por_pacote'])
             qtd_atual = int(row['quantidade'])
-            
-            # Preço unitário de custo real
             custo_unitario = float(row['custo']) / u_pack if row['tipo_venda'] == "Fardo/Fechado" else float(row['custo'])
             preco_venda_unitario = float(row['preco_venda'])
-            
             total_custo_item = custo_unitario * qtd_atual
             total_venda_item = preco_venda_unitario * qtd_atual
             
@@ -415,38 +453,68 @@ else:
     except: df_vendas = pd.DataFrame()
         
     if df_vendas.empty:
-        st.info("Nenhuma venda realizada ainda.")
+        st.info("Nenhuma venda realizada ainda para gerar os relatórios de lucro.")
         if valor_estoque_custo > 0:
             st.metric("📦 Capital Empatado em Estoque (Custo)", f"R$ {valor_estoque_custo:.2f}")
     else:
+        # Prepara a data em texto para os agrupamentos por dia
+        df_vendas['data_curta'] = df_vendas['data_hora'].astype(str).str.slice(0, 10)
+        
+        # 💵 CÁLCULO DO LUCRO DE HOJE
+        hoje_str = datetime.now().strftime("%Y-%m-%d")
+        df_hoje = df_vendas[df_vendas['data_curta'] == hoje_str]
+        fat_hoje = df_hoje['valor_total'].sum() if not df_hoje.empty else 0.0
+        lucro_hoje = df_hoje['lucro'].sum() if not df_hoje.empty else 0.0
+
+        # Cards com métricas principais
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("💰 Faturamento Bruto", f"R$ {df_vendas['valor_total'].sum():.2f}")
-        c2.metric("📈 Lucro Líquido Real", f"R$ {df_vendas['lucro'].sum():.2f}")
-        c3.metric("📦 Valor em Estoque (Custo)", f"R$ {valor_estoque_custo:.2f}")
-        c4.metric("📊 Valor em Estoque (Venda)", f"R$ {valor_estoque_venda:.2f}")
+        c1.metric("☀️ Lucro de HOJE", f"R$ {lucro_hoje:.2f}", delta=f"Vendas Hoje: R$ {fat_hoje:.2f}")
+        c2.metric("📈 Lucro Total Acumulado", f"R$ {df_vendas['lucro'].sum():.2f}")
+        c3.metric("💰 Faturamento Total", f"R$ {df_vendas['valor_total'].sum():.2f}")
+        c4.metric("📦 Valor em Estoque (Custo)", f"R$ {valor_estoque_custo:.2f}")
         
         st.divider()
-        st.subheader("📈 Gráfico de Desempenho Diário")
-        df_vendas['data_curta'] = df_vendas['data_hora'].astype(str).str.slice(0, 10)
+        st.subheader("📈 Desempenho e Lucro por Dia")
+        
         df_grafico = df_vendas.groupby('data_curta')[['valor_total', 'lucro']].sum().reset_index()
         st.bar_chart(df_grafico.rename(columns={'data_curta': 'Data', 'valor_total': 'Faturamento (R$)', 'lucro': 'Lucro Real (R$)'}).set_index('Data'), use_container_width=True)
         
         st.divider()
+        st.subheader("🗄️ Relatórios Financeiros (Passe o mouse na tabela para baixar)")
         
-        # 📂 ABA DE EXTRAÇÃO DOS RELATÓRIOS MENSAIS
-        st.subheader("🗄️ Relatórios Mensais (Passe o mouse para baixar)")
+        # 📂 NOVAS ABAS DE RELATÓRIO
+        tab_lucro_diario, tab_vendas_geral, tab_estoque = st.tabs([
+            "📅 Relatório de Lucro Diário", 
+            "📋 Histórico Geral de Vendas", 
+            "📦 Inventário de Estoque"
+        ])
         
-        tab_vendas, tab_estoque = st.tabs(["📋 Relatório de Vendas (Mensal)", "📦 Relatório de Inventário (Estoque Parado)"])
-        
-        with tab_vendas:
-            st.markdown("**Histórico Completo de Vendas:** Clique na setinha no canto direito da tabela para salvar.")
+        with tab_lucro_diario:
+            st.markdown("**Resumo do Faturamento e Lucro por Data:**")
+            df_lucro_dia = df_vendas.groupby('data_curta').agg(
+                Faturamento_Dia=('valor_total', 'sum'),
+                Lucro_Dia=('lucro', 'sum'),
+                Qtd_Vendas=('id', 'count')
+            ).reset_index().sort_values(by='data_curta', ascending=False)
+            
+            df_lucro_dia_exibir = df_lucro_dia.rename(columns={
+                'data_curta': 'Data',
+                'Faturamento_Dia': 'Faturamento (R$)',
+                'Lucro_Dia': 'Lucro Líquido (R$)',
+                'Qtd_Vendas': 'Número de Vendas'
+            })
+            
+            # Formatação limpa de moeda
+            df_lucro_dia_exibir['Faturamento (R$)'] = df_lucro_dia_exibir['Faturamento (R$)'].map(lambda x: f"R$ {x:.2f}")
+            df_lucro_dia_exibir['Lucro Líquido (R$)'] = df_lucro_dia_exibir['Lucro Líquido (R$)'].map(lambda x: f"R$ {x:.2f}")
+            
+            st.dataframe(df_lucro_dia_exibir, use_container_width=True)
+            
+        with tab_vendas_geral:
             st.dataframe(df_vendas[['data_hora', 'produto', 'quantidade', 'valor_total', 'lucro', 'pagamento']].rename(columns={
                 'data_hora': 'Data/Hora', 'produto': 'Item', 'quantidade': 'Qtd Vendida', 'valor_total': 'Total Recebido (R$)', 'lucro': 'Lucro Real (R$)', 'pagamento': 'Forma Pagto'
             }), use_container_width=True)
             
         with tab_estoque:
-            if not df_inventario_print.empty:
-                st.markdown("**Inventário Atual de Auditoria:** Use este fechamento para contar os produtos fisicamente na loja.")
+            if not df_inventario_print.empty: 
                 st.dataframe(df_inventario_print, use_container_width=True)
-            else:
-                st.info("Nenhum produto cadastrado para gerar o inventário.")
