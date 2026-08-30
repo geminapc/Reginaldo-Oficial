@@ -359,8 +359,13 @@ elif tela == "📦 Controle de Estoque":
         produto_ajuste = st.selectbox("Selecione o Produto para ajustar", df_estoque["produto"].tolist(), key="ajuste_produto")
         dados_prod = df_estoque[df_estoque["produto"] == produto_ajuste].iloc[0]
         col_aj1, col_aj2 = st.columns(2)
-        with col_aj1: nova_qtd = st.number_input("Nova Quantidade Exata", min_value=0, value=int(dados_prod["quantidade"]))
-        with col_aj2: novo_preco = st.number_input("Novo Preço de Venda (R$)", min_value=0.0, value=float(dados_prod["preco_venda"]), step=0.01)
+        with col_aj1: 
+            # 🛡️ CORREÇÃO: Garante que valores negativos não quebrem o min_value=0
+            qtd_segura = max(0, int(dados_prod["quantidade"]))
+            nova_qtd = st.number_input("Nova Quantidade Exata", min_value=0, value=qtd_segura)
+        with col_aj2: 
+            preco_seguro = max(0.0, float(dados_prod["preco_venda"]))
+            novo_preco = st.number_input("Novo Preço de Venda (R$)", min_value=0.0, value=preco_seguro, step=0.01)
         if st.button("Salvar Ajustes"):
             try:
                 with conn.session as session:
@@ -410,7 +415,7 @@ elif tela == "📋 Extrato do Estoque":
     else: st.dataframe(df_mov.rename(columns={'data_hora': 'Data/Hora', 'produto': 'Produto', 'tipo_movimentacao': 'Operação', 'quantidade': 'Qtd Movimentada', 'estoque_anterior': 'Estoque Antigo', 'estoque_novo': 'Estoque Novo', 'observacao': 'Detalhes'}), use_container_width=True)
 
 # -----------------------------------------------------------------------------------------
-# TELA 5: PAINEL FINANCEIRO & RELATÓRIOS (COM RELATÓRIO DE LUCRO DIÁRIO)
+# TELA 5: PAINEL FINANCEIRO
 # -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Fechamento de Inventário")
@@ -457,16 +462,13 @@ else:
         if valor_estoque_custo > 0:
             st.metric("📦 Capital Empatado em Estoque (Custo)", f"R$ {valor_estoque_custo:.2f}")
     else:
-        # Prepara a data em texto para os agrupamentos por dia
         df_vendas['data_curta'] = df_vendas['data_hora'].astype(str).str.slice(0, 10)
         
-        # 💵 CÁLCULO DO LUCRO DE HOJE
         hoje_str = datetime.now().strftime("%Y-%m-%d")
         df_hoje = df_vendas[df_vendas['data_curta'] == hoje_str]
         fat_hoje = df_hoje['valor_total'].sum() if not df_hoje.empty else 0.0
         lucro_hoje = df_hoje['lucro'].sum() if not df_hoje.empty else 0.0
 
-        # Cards com métricas principais
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("☀️ Lucro de HOJE", f"R$ {lucro_hoje:.2f}", delta=f"Vendas Hoje: R$ {fat_hoje:.2f}")
         c2.metric("📈 Lucro Total Acumulado", f"R$ {df_vendas['lucro'].sum():.2f}")
@@ -482,7 +484,6 @@ else:
         st.divider()
         st.subheader("🗄️ Relatórios Financeiros (Passe o mouse na tabela para baixar)")
         
-        # 📂 NOVAS ABAS DE RELATÓRIO
         tab_lucro_diario, tab_vendas_geral, tab_estoque = st.tabs([
             "📅 Relatório de Lucro Diário", 
             "📋 Histórico Geral de Vendas", 
@@ -504,7 +505,6 @@ else:
                 'Qtd_Vendas': 'Número de Vendas'
             })
             
-            # Formatação limpa de moeda
             df_lucro_dia_exibir['Faturamento (R$)'] = df_lucro_dia_exibir['Faturamento (R$)'].map(lambda x: f"R$ {x:.2f}")
             df_lucro_dia_exibir['Lucro Líquido (R$)'] = df_lucro_dia_exibir['Lucro Líquido (R$)'].map(lambda x: f"R$ {x:.2f}")
             
